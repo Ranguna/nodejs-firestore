@@ -14,7 +14,7 @@
 
 import {DocumentData} from '@google-cloud/firestore';
 
-import {describe, it, beforeEach, afterEach} from 'mocha';
+import {afterEach, beforeEach, describe, it} from 'mocha';
 import {expect} from 'chai';
 import {Status} from 'google-gax';
 
@@ -34,9 +34,8 @@ import {
   updateMask,
   verifyInstance,
 } from './util/helpers';
-
-import api = proto.google.firestore.v1;
 import {setTimeoutHandler} from '../src/backoff';
+import api = proto.google.firestore.v1;
 
 // Change the argument to 'console.log' to enable debug output.
 setLogFunction(() => {});
@@ -111,14 +110,14 @@ describe('BulkWriter', () => {
     };
   }
 
-  function failedResponse(): api.IBatchWriteResponse {
+  function failedResponse(code = Status.UNAVAILABLE): api.IBatchWriteResponse {
     return {
       writeResults: [
         {
           updateTime: null,
         },
       ],
-      status: [{code: Status.UNAVAILABLE}],
+      status: [{code}],
     };
   }
 
@@ -546,8 +545,45 @@ describe('BulkWriter', () => {
     return bulkWriter.close().then(() => verifyOpCount(2));
   });
 
-  describe('500/50/5 support', () => {
+  describe('Timeout handler tests', () => {
     afterEach(() => setTimeoutHandler(setTimeout));
+
+    it('retries writes that fail with ABORTED errors', async () => {
+      setTimeoutHandler(setImmediate);
+
+      // Create mock responses that simulate one successful write followed by
+      // failed responses.
+      const bulkWriter = await instantiateInstance([
+        {
+          request: createRequest([
+            setOp('doc1', 'bar'),
+            setOp('doc2', 'bar'),
+            setOp('doc3', 'bar'),
+          ]),
+          response: mergeResponses([
+            successResponse(1),
+            failedResponse(Status.ABORTED),
+            failedResponse(Status.ABORTED),
+          ]),
+        },
+        {
+          request: createRequest([setOp('doc2', 'bar'), setOp('doc3', 'bar')]),
+          response: mergeResponses([
+            successResponse(2),
+            failedResponse(Status.ABORTED),
+          ]),
+        },
+        {
+          request: createRequest([setOp('doc3', 'bar')]),
+          response: mergeResponses([successResponse(3)]),
+        },
+      ]);
+
+      bulkWriter.set(firestore.doc('collectionId/doc1'), {foo: 'bar'});
+      bulkWriter.set(firestore.doc('collectionId/doc2'), {foo: 'bar'});
+      bulkWriter.set(firestore.doc('collectionId/doc3'), {foo: 'bar'});
+      await bulkWriter.close();
+    });
 
     // TODO(chenbrian): Actually fix this test...
     it.skip('does not send batches if doing so exceeds the rate limit', async () => {
