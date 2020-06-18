@@ -110,7 +110,9 @@ describe('BulkWriter', () => {
     };
   }
 
-  function failedResponse(code = Status.UNAVAILABLE): api.IBatchWriteResponse {
+  function failedResponse(
+    code = Status.DEADLINE_EXCEEDED
+  ): api.IBatchWriteResponse {
     return {
       writeResults: [
         {
@@ -262,7 +264,7 @@ describe('BulkWriter', () => {
     const doc = firestore.doc('collectionId/doc');
     bulkWriter.set(doc, {foo: 'bar'}).catch(err => {
       incrementOpCount();
-      expect(err.code).to.equal(Status.UNAVAILABLE);
+      expect(err.code).to.equal(Status.DEADLINE_EXCEEDED);
     });
 
     return bulkWriter.close().then(async () => verifyOpCount(1));
@@ -562,7 +564,7 @@ describe('BulkWriter', () => {
           ]),
           response: mergeResponses([
             successResponse(1),
-            failedResponse(Status.ABORTED),
+            failedResponse(Status.UNAVAILABLE),
             failedResponse(Status.ABORTED),
           ]),
         },
@@ -579,10 +581,19 @@ describe('BulkWriter', () => {
         },
       ]);
 
-      bulkWriter.set(firestore.doc('collectionId/doc1'), {foo: 'bar'});
-      bulkWriter.set(firestore.doc('collectionId/doc2'), {foo: 'bar'});
-      bulkWriter.set(firestore.doc('collectionId/doc3'), {foo: 'bar'});
+      const set1 = bulkWriter.set(firestore.doc('collectionId/doc1'), {
+        foo: 'bar',
+      });
+      const set2 = bulkWriter.set(firestore.doc('collectionId/doc2'), {
+        foo: 'bar',
+      });
+      const set3 = bulkWriter.set(firestore.doc('collectionId/doc3'), {
+        foo: 'bar',
+      });
       await bulkWriter.close();
+      expect((await set1).writeTime).to.deep.equal(new Timestamp(1, 0));
+      expect((await set2).writeTime).to.deep.equal(new Timestamp(2, 0));
+      expect((await set3).writeTime).to.deep.equal(new Timestamp(3, 0));
     });
 
     // TODO(chenbrian): Actually fix this test...
